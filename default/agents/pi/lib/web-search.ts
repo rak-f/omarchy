@@ -1,7 +1,7 @@
 // Web search client for Pi's web_search tool.
 // Uses Exa's hosted MCP search endpoint out of the box (no API key required),
-// or routes automatically when SEARXNG_URL, TAVILY_API_KEY, BRAVE_API_KEY, or
-// EXA_API_KEY is set. Imports nothing from Pi, so it runs under plain Node for
+// or routes automatically when SEARXNG_URL, TAVILY_API_KEY, BRAVE_API_KEY,
+// FIRECRAWL_API_KEY, or EXA_API_KEY is set. Imports nothing from Pi, so it runs under plain Node for
 // tests.
 
 export const DEFAULT_NUM_RESULTS = 8;
@@ -13,12 +13,14 @@ export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 export const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
 export const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
 export const BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search";
+export const FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v2/search";
+export const FIRECRAWL_INTEGRATION = "_omarchy";
 export const USER_AGENT = "pi-web-search";
 
 export const BYOK_HINT =
-  "Set EXA_API_KEY, TAVILY_API_KEY, BRAVE_API_KEY, or SEARXNG_URL in your environment to use your own search backend.";
+  "Set EXA_API_KEY, TAVILY_API_KEY, BRAVE_API_KEY, FIRECRAWL_API_KEY, or SEARXNG_URL in your environment to use your own search backend.";
 
-export type BackendName = "searxng" | "tavily" | "brave" | "exa" | "exa-free";
+export type BackendName = "searxng" | "tavily" | "brave" | "firecrawl" | "exa" | "exa-free";
 
 export interface SearchOutcome {
   backend: BackendName;
@@ -35,6 +37,7 @@ export interface SearchOptions {
     exa?: string;
     tavily?: string;
     brave?: string;
+    firecrawl?: string;
   };
 }
 
@@ -334,6 +337,48 @@ async function searchBrave(
   return { backend: "brave", text, resultCount: items.length };
 }
 
+async function searchFirecrawl(
+  endpoint: string,
+  apiKey: string,
+  query: string,
+  numResults: number,
+  signal: AbortSignal,
+): Promise<SearchOutcome> {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    signal,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+      "User-Agent": USER_AGENT,
+    },
+    body: JSON.stringify({
+      query,
+      limit: numResults,
+      integration: FIRECRAWL_INTEGRATION,
+    }),
+  });
+  const raw = await readTextCapped(response, signal);
+  if (!response.ok) {
+    const detail = sanitizeError(raw.trim().slice(0, 300) || response.statusText, [apiKey]);
+    throw new Error(`Firecrawl search failed (${response.status}): ${detail}`);
+  }
+
+  const data = JSON.parse(raw) as {
+    data?: { web?: Array<{ title?: string; url?: string; description?: string }> };
+  };
+  const items = (data.data?.web ?? []).slice(0, numResults);
+  const text = formatEntries(
+    items.map((item) => ({
+      title: item.title,
+      url: item.url,
+      snippet: item.description,
+    })),
+  );
+
+  return { backend: "firecrawl", text, resultCount: items.length };
+}
+
 export async function runSearch(options: SearchOptions): Promise<SearchOutcome> {
   const env = options.env ?? process.env;
   const query = options.query.trim();
@@ -344,8 +389,9 @@ export async function runSearch(options: SearchOptions): Promise<SearchOutcome> 
   const searxngUrl = env.SEARXNG_URL?.trim();
   const tavilyKey = env.TAVILY_API_KEY?.trim();
   const braveKey = env.BRAVE_API_KEY?.trim();
+  const firecrawlKey = env.FIRECRAWL_API_KEY?.trim();
   const exaKey = env.EXA_API_KEY?.trim();
-  const secrets = [tavilyKey, braveKey, exaKey];
+  const secrets = [tavilyKey, braveKey, firecrawlKey, exaKey];
 
   try {
     if (searxngUrl) return await searchSearxng(searxngUrl, query, numResults, options.signal);
@@ -354,6 +400,15 @@ export async function runSearch(options: SearchOptions): Promise<SearchOutcome> 
     }
     if (braveKey) {
       return await searchBrave(options.endpoints?.brave ?? BRAVE_SEARCH_URL, braveKey, query, numResults, options.signal);
+    }
+    if (firecrawlKey) {
+      return await searchFirecrawl(
+        options.endpoints?.firecrawl ?? FIRECRAWL_SEARCH_URL,
+        firecrawlKey,
+        query,
+        numResults,
+        options.signal,
+      );
     }
     return await searchExa(options.endpoints?.exa ?? EXA_MCP_URL, query, numResults, options.signal, exaKey);
   } catch (error) {

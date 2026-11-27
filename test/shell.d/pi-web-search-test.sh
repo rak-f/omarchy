@@ -131,6 +131,23 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    if (req.url === "/firecrawl") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          success: true,
+          data: { web: [{ title: "Firecrawl Hit", url: "https://firecrawl.example", description: "Desc" }] },
+        }),
+      );
+      return;
+    }
+
+    if (req.url === "/firecrawl-error") {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(`{"success":false,"error":"Unauthorized: Invalid token ${req.headers.authorization}"}`);
+      return;
+    }
+
     res.writeHead(404);
     res.end("not found");
   });
@@ -229,6 +246,35 @@ try {
   assert.equal(brave.resultCount, 1);
   assert.equal(lastRequest.headers["x-subscription-token"], "brave-key");
   console.log("ok - BRAVE_API_KEY routes to Brave Search");
+
+  // Firecrawl backend, tagged with the integration name
+  const firecrawlKey = "fc-secret-key";
+  const firecrawl = await runSearch({
+    query: "arch",
+    numResults: 3,
+    signal: AbortSignal.timeout(5000),
+    env: { FIRECRAWL_API_KEY: firecrawlKey, EXA_API_KEY: "e" },
+    endpoints: { firecrawl: `${base}/firecrawl` },
+  });
+  assert.equal(firecrawl.backend, "firecrawl");
+  assert.equal(firecrawl.resultCount, 1);
+  assert.match(firecrawl.text, /1\. Firecrawl Hit\nURL: https:\/\/firecrawl\.example\nSnippet: Desc/);
+  assert.equal(lastRequest.headers.authorization, `Bearer ${firecrawlKey}`);
+  const firecrawlBody = JSON.parse(lastRequest.body);
+  assert.equal(firecrawlBody.query, "arch");
+  assert.equal(firecrawlBody.limit, 3);
+  assert.equal(firecrawlBody.integration, "_omarchy");
+  await assert.rejects(
+    () =>
+      runSearch({
+        query: "arch",
+        signal: AbortSignal.timeout(5000),
+        env: { FIRECRAWL_API_KEY: firecrawlKey },
+        endpoints: { firecrawl: `${base}/firecrawl-error` },
+      }),
+    (err) => err.message.includes("Firecrawl search failed (401)") && !err.message.includes(firecrawlKey),
+  );
+  console.log("ok - FIRECRAWL_API_KEY routes to Firecrawl Search, tags the integration, and is redacted from errors");
 
   // Empty query rejected
   await assert.rejects(

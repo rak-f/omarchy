@@ -1,7 +1,8 @@
 // web_search: search the web from pi with zero setup.
 // Uses Exa's hosted MCP search endpoint out of the box (no API key required),
 // or routes automatically to a configured backend when SEARXNG_URL,
-// TAVILY_API_KEY, BRAVE_API_KEY, or EXA_API_KEY is set in the environment.
+// TAVILY_API_KEY, BRAVE_API_KEY, FIRECRAWL_API_KEY, or EXA_API_KEY is set in the
+// environment.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
