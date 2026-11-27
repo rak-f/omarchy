@@ -1,4 +1,4 @@
-echo "Disable NMI watchdog to save power and free a PMU counter"
+echo "Disable NMI watchdog to save power"
 
 watchdog=/proc/sys/kernel/nmi_watchdog
 dropin=/etc/sysctl.d/99-omarchy-nmi-watchdog.conf
@@ -12,9 +12,4 @@ if [[ ! -r $dropin ]]; then
   exit 75
 fi
 
-current=$(<"$watchdog")
-if [[ $current == "0" ]]; then
-  exit 0
-fi
-
-sudo /usr/lib/systemd/systemd-sysctl "$dropin"
+[[ $(<"$watchdog") == "0" ]] || sudo /usr/lib/systemd/systemd-sysctl "$dropin"
